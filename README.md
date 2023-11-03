@@ -1,2 +1,1 @@
-# eudyptula-challenge
-My solutions to the eudyptula challenge
+See my write-up [here](https://scottjcrouch.github.io/eudyptula.html)!
