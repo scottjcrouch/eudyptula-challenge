@@ -1,0 +1,77 @@
+From 8a162d98fa4e666a5ef0291f6dcba569b96dde66 Mon Sep 17 00:00:00 2001
+From: "Scott J. Crouch" <foobar@foobar.com>
+Date: Sun, 31 Jul 2022 11:08:59 +1000
+Subject: [PATCH] drivers: input: misc: pcspkr: Add id attribute
+
+---
+ drivers/input/misc/pcspkr.c | 34 +++++++++++++++++++++++++++++++++-
+ 1 file changed, 33 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/input/misc/pcspkr.c b/drivers/input/misc/pcspkr.c
+index 9c666b2f14fe..98c079174cbd 100644
+--- a/drivers/input/misc/pcspkr.c
++++ b/drivers/input/misc/pcspkr.c
+@@ -63,9 +63,32 @@ static int pcspkr_event(struct input_dev *dev, unsigned int type,
+ 	return 0;
+ }
+ 
++static const char id[] = "voidstarfoobar\n";
++
++static ssize_t id_show(struct kobject *kobj, struct kobj_attribute *attr,
++		       char *buf)
++{
++	int data_len = strlen(id);
++	memcpy(buf, id, data_len);
++	return data_len;
++}
++
++static ssize_t id_store(struct kobject *kobj, struct kobj_attribute *attr,
++			const char *buf, size_t size)
++{
++	if (size < strlen(id) - 1 || strncmp(buf, id, strlen(id) - 1)) {
++		return -EINVAL;
++	}
++	return size;
++}
++
++static const struct kobj_attribute id_attr =
++	__ATTR(id, S_IRUGO | S_IWUSR, id_show, id_store);
++
+ static int pcspkr_probe(struct platform_device *dev)
+ {
+ 	struct input_dev *pcspkr_dev;
++	struct kobject *dev_kobj;
+ 	int err;
+ 
+ 	pcspkr_dev = input_allocate_device();
+@@ -92,12 +115,22 @@ static int pcspkr_probe(struct platform_device *dev)
+ 
+ 	platform_set_drvdata(dev, pcspkr_dev);
+ 
++	dev_kobj = &(dev->dev.kobj);
++	err = sysfs_create_file(dev_kobj, &(id_attr.attr));
++	if (err) {
++		input_free_device(pcspkr_dev);
++		return err;
++	}
++
+ 	return 0;
+ }
+ 
+ static int pcspkr_remove(struct platform_device *dev)
+ {
+ 	struct input_dev *pcspkr_dev = platform_get_drvdata(dev);
++	struct kobject *dev_kobj = &(dev->dev.kobj);
++
++	sysfs_remove_file(dev_kobj, &(id_attr.attr));
+ 
+ 	input_unregister_device(pcspkr_dev);
+ 	/* turn off the speaker */
+@@ -133,4 +166,3 @@ static struct platform_driver pcspkr_platform_driver = {
+ 	.shutdown	= pcspkr_shutdown,
+ };
+ module_platform_driver(pcspkr_platform_driver);
+-
+-- 
+2.20.1
+

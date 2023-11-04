@@ -1,0 +1,94 @@
+From c33b476ad51445154c9e09cc3648ab63f8227af8 Mon Sep 17 00:00:00 2001
+From: "Scott J. Crouch" <foobar@foobar.com>
+Date: Sun, 4 Sep 2022 21:01:31 +1000
+Subject: [PATCH] syscall: new eudyptula x64 syscall
+
+---
+ arch/x86/entry/syscalls/syscall_64.tbl   |  1 +
+ arch/x86/include/asm/eudyptula_64.h      |  7 +++++++
+ arch/x86/include/uapi/asm/eudyptula_64.h |  7 +++++++
+ arch/x86/kernel/Makefile                 |  1 +
+ arch/x86/kernel/eudyptula_64.c           | 19 +++++++++++++++++++
+ 5 files changed, 35 insertions(+)
+ create mode 100644 arch/x86/include/asm/eudyptula_64.h
+ create mode 100644 arch/x86/include/uapi/asm/eudyptula_64.h
+ create mode 100644 arch/x86/kernel/eudyptula_64.c
+
+diff --git a/arch/x86/entry/syscalls/syscall_64.tbl b/arch/x86/entry/syscalls/syscall_64.tbl
+index c84d12608cd2..8e255f525ee8 100644
+--- a/arch/x86/entry/syscalls/syscall_64.tbl
++++ b/arch/x86/entry/syscalls/syscall_64.tbl
+@@ -372,6 +372,7 @@
+ 448	common	process_mrelease	sys_process_mrelease
+ 449	common	futex_waitv		sys_futex_waitv
+ 450	common	set_mempolicy_home_node	sys_set_mempolicy_home_node
++451	64	eudyptula		sys_eudyptula
+ 
+ #
+ # Due to a historical design error, certain syscalls are numbered differently
+diff --git a/arch/x86/include/asm/eudyptula_64.h b/arch/x86/include/asm/eudyptula_64.h
+new file mode 100644
+index 000000000000..3817ea673370
+--- /dev/null
++++ b/arch/x86/include/asm/eudyptula_64.h
+@@ -0,0 +1,7 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef _ASM_X86_EUDYPTULA_64_H
++#define _ASM_X86_EUDYPTULA_64_H
++
++#include <uapi/asm/eudyptula_64.h>
++
++#endif /* _ASM_X86_EUDYPTULA_64_H */
+diff --git a/arch/x86/include/uapi/asm/eudyptula_64.h b/arch/x86/include/uapi/asm/eudyptula_64.h
+new file mode 100644
+index 000000000000..7f7b2222e0ae
+--- /dev/null
++++ b/arch/x86/include/uapi/asm/eudyptula_64.h
+@@ -0,0 +1,7 @@
++/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
++#ifndef _UAPI_ASM_X86_EUDYPTULA_64_H
++#define _UAPI_ASM_X86_EUDYPTULA_64_H
++
++#define EUDYPTULA_ID 0xbeefbadb0ba900d
++
++#endif /* _UAPI_ASM_X86_EUDYPTULA_64_H */
+diff --git a/arch/x86/kernel/Makefile b/arch/x86/kernel/Makefile
+index c41ef42adbe8..5d040bb8c4e7 100644
+--- a/arch/x86/kernel/Makefile
++++ b/arch/x86/kernel/Makefile
+@@ -114,6 +114,7 @@ obj-$(CONFIG_MODULES)		+= module.o
+ obj-$(CONFIG_X86_32)		+= doublefault_32.o
+ obj-$(CONFIG_KGDB)		+= kgdb.o
+ obj-$(CONFIG_VM86)		+= vm86_32.o
++obj-y				+= eudyptula_64.o
+ obj-$(CONFIG_EARLY_PRINTK)	+= early_printk.o
+ 
+ obj-$(CONFIG_HPET_TIMER) 	+= hpet.o
+diff --git a/arch/x86/kernel/eudyptula_64.c b/arch/x86/kernel/eudyptula_64.c
+new file mode 100644
+index 000000000000..519feff32f67
+--- /dev/null
++++ b/arch/x86/kernel/eudyptula_64.c
+@@ -0,0 +1,19 @@
++// SPDX-License-Identifier: GPL-2.0
++
++#include <linux/syscalls.h>
++
++#include <asm/eudyptula_64.h>
++
++/*
++ * Verify that the input equals our magic id.
++ */
++SYSCALL_DEFINE2(eudyptula, int, high_id, int, low_id)
++{
++	int err = 0;
++
++	if ((int) (EUDYPTULA_ID        & 0xFFFFFFFF)  != low_id ||
++	    (int)((EUDYPTULA_ID >> 32) & 0xFFFFFFFF)  != high_id)
++		err = -EINVAL;
++
++	return err;
++}
+-- 
+2.20.1
+

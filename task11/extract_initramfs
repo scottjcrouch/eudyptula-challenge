@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+
+# ----------------------------------------------------------------------------
+#
+# AUTHOR: Scott J. Crouch
+#
+# DESCRIPTION: Extract an initramfs cpio archive to view its contents.
+#
+# ----------------------------------------------------------------------------
+
+set -euo pipefail
+
+function usage
+{
+    cat <<EOF
+Usage:
+    ${0##*/} path_to_initramfs
+Stdin:     none
+Stdout:    none
+Globals:   VERBOSE=0, HELP=0
+EOF
+    exit 0
+}
+
+function installed
+{
+    command -v "$1" &> /dev/null;
+}
+
+function die
+{
+    >&2 echo "Fatal: $*"
+    exit 1
+}
+
+deps=(gunzip)
+for dep in "${deps[@]}"; do
+    installed "${dep}" || die "Missing '${dep}'"
+done
+
+VERBOSE=${VERBOSE:-0}
+HELP=${HELP:-0}
+[[ $VERBOSE -ne 0 ]] && set -x
+[[ $HELP -eq 1 ]] && usage
+
+initramfs_img="$1" && shift
+
+# make a temporary directory
+tmp_dir=$(mktemp -d -t "$initramfs_img-XXXXXXXX")
+
+# copy the image into it, and uncompress it
+cp "$initramfs_img" "$tmp_dir/initrd.img.gz"
+gunzip -v "$tmp_dir/initrd.img.gz"
+
+# extract the content of the cpio archive
+cd "$tmp_dir/"
+cpio -i < "initrd.img"

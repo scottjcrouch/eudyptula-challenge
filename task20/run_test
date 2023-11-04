@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+function die
+{
+    >&2 echo "${0##*/}: die(): $*"
+    clean_up
+    exit 1
+}
+
+function esc_fg_col() { printf "\e[38;5;%sm" "${1}"; }
+function esc_bg_col() { printf "\e[38;5;%sm" "${1}"; }
+function esc_reset() { printf "\e[0m"; }
+
+test_counter=1
+
+function test_header
+{
+    esc_fg_col 6
+    printf -- "---------- TEST $((test_counter++)): \"$1\" (${0##*/}:${BASH_LINENO[0]}) ----------\n"
+    esc_reset
+    sleep 0.1 # avoid out-of-order execution, logging
+}
+
+function handle_sig {
+    exit_code=$?
+    caller=$(caller 0)
+    caller_arr=("-" "-" "-")
+    [[ -n ${caller} ]] && caller_arr=(${caller})
+    esc_fg_col 5
+    printf "${0##*/}: handle_sig(): signal caught on line: %s, scope: %s()\n" "${caller_arr[0]}" "${caller_arr[1]}"
+    printf "${0##*/}: handle_sig(): Clean up on aisle ${caller_arr[0]}!\n"
+    esc_reset
+    clean_up
+    exit "${exit_code}"
+}
+trap 'handle_sig' SIGINT SIGTERM
+function err_report() {
+    exit_code=$?
+    caller=$(caller 0)
+    caller_arr=("-" "-" "-")
+    [[ -n ${caller} ]] && caller_arr=(${caller})
+    esc_fg_col 1
+    printf "${0##*/}: err_report(): ERR caught on line: %s, scope: %s()\n" "${caller_arr[0]}" "${caller_arr[1]}"
+    printf "${0##*/}: err_report(): Clean up on aisle ${caller_arr[0]}!\n"
+    esc_reset
+    clean_up
+    exit "${exit_code}"
+}
+trap 'err_report' ERR
+
+function clean_up {
+    esc_fg_col 3
+    printf "${0##*/}: clean_up(): Cleaning up...\n"
+    esc_reset
+
+    [[ -v tmp_dir && -n ${tmp_dir} ]] && sudo umount "${tmp_dir}" || true
+    [[ -v loop_dev && -n ${loop_dev} ]] && sudo losetup -d "${loop_dev}" || true
+    sudo modprobe -r zram || true
+    [[ -v tmp_dir && -n ${tmp_dir} ]] && rm -r "${tmp_dir}" || true
+
+    esc_fg_col 3
+    printf "${0##*/}: clean_up(): Finished\n"
+    esc_reset
+}
+
+test_header "compile ioctl_test c program"
+(cd ioctl_test && make)
+
+test_header "create temporary directory"
+tmp_dir=$(mktemp --tmpdir -d "${0##*/}-XXXXXXXX")
+
+test_header "load zram module"
+sudo modprobe zram
+
+test_header "configure zram block device"
+echo $((64 * 1024 * 1024)) | sudo tee /sys/block/zram0/disksize
+
+test_header "remap zram block device to change the sector size"
+sector_size=512
+loop_dev=$(sudo losetup --sector-size ${sector_size} -f /dev/zram0 --show)
+
+test_header "format loop device"
+vol_label="3udyp2la" # short file entries can store up to 11 chars (no null terminator is necessary)
+vol_id="41424344" # 32-bit hex number, "ABCD" in ascii
+fat_width=32 # =16
+sudo mkfs.fat -v -n "${vol_label}" -i "${vol_id}" -F${fat_width} "${loop_dev}"
+
+test_header "mount"
+sudo mount -o uid=debian,gid=debian -t vfat "${loop_dev}" "${tmp_dir}"
+
+test_header "create some temporary files in the directory"
+tmp_file_1=$(mktemp --tmpdir="${tmp_dir}" "${0##*/}-XXXXXXXX")
+tmp_file_2=$(mktemp --tmpdir="${tmp_dir}" "${0##*/}-XXXXXXXX")
+
+test_header "show filesystem"
+find "${tmp_dir}"
+
+test_header "run fatlabel (from dosfstools; reads the root entry)"
+sudo fatlabel "${loop_dev}"
+
+test_header "run mlabel (from mtools; reads the root entry)"
+sudo mlabel -i "${loop_dev}" -s ::
+
+test_header "hex dump "${loop_dev}""
+sudo hexdump -f ./hexdump_wider_fmt.txt "${loop_dev}"
+
+test_header "run ioctl test"
+ioctl_test/build/bin/ioctl_test "${tmp_dir}"
+
+test_header "hex dump "${loop_dev}" (post-test)"
+sudo hexdump -f ./hexdump_wider_fmt.txt "${loop_dev}"
+
+test_header "show filesystem (post-test)"
+find "${tmp_dir}"
+
+test_header "run fatlabel (post-test)"
+sudo fatlabel "${loop_dev}"
+
+test_header "run mlabel (post-test)"
+sudo mlabel -i "${loop_dev}" -s ::
+
+clean_up
+
+exit 0

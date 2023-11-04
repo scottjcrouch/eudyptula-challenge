@@ -1,0 +1,28 @@
+From e99132b9a2a7add5b7170b79493a83cfec7abaa2 Mon Sep 17 00:00:00 2001
+From: "Scott J. Crouch" <foobar@foobar.com>
+Date: Thu, 8 Oct 2020 10:22:52 +1100
+Subject: [PATCH 1/1] Append "-eudyptula" to the kernel version string
+
+This is for task 3 of the eudyptula challenge. Not much else to say here.
+
+Signed-off-by: Scott J. Crouch <foobar@foobar.com>
+---
+ Makefile | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Makefile b/Makefile
+index 2b66d3398878..4db3b9bee411 100644
+--- a/Makefile
++++ b/Makefile
+@@ -2,7 +2,7 @@
+ VERSION = 5
+ PATCHLEVEL = 9
+ SUBLEVEL = 0
+-EXTRAVERSION = -rc6
++EXTRAVERSION = -rc6-eudyptula
+ NAME = Kleptomaniac Octopus
+ 
+ # *DOCUMENTATION*
+-- 
+2.28.0
+

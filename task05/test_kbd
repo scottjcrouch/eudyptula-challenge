@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+sudo udevadm trigger \
+     --verbose \
+     --action=add \
+     --subsystem-match=usb

@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+
+# ------------------------------------------------------------------
+#
+# AUTHOR: Scott J. Crouch
+# DESCRIPTION: Run qemu in kvm mode with a samba share on the CWD.
+#
+# ------------------------------------------------------------------
+
+set -euo pipefail
+
+function usage
+{
+    cat << EOF
+Usage:
+        ${0##*/} qcow2_image [args_for_qemu...]
+Stdin:
+        to qemu-system-x86_64
+Stdout:
+        from qemu-system-x86_64
+Env params:
+        VERBOSE=0, HELP=0, LEGACYBIOS=0, KERNEL="", BOOTDISK="", APPEND="",
+        SERIAL=0, GDB=0, CORES=$(nproc), LOGFILE="", RAM=4G
+EOF
+    exit 0
+}
+function installed
+{
+    command -v "$1" &> /dev/null;
+}
+function die
+{
+    >&2 echo "Fatal: $*"
+    exit 1
+}
+
+# Required executables
+deps=(qemu-system-x86_64 samba)
+for dep in "${deps[@]}"; do
+    installed "${dep}" || die "Missing '${dep}'"
+done
+
+VERBOSE=${VERBOSE:-0}
+HELP=${HELP:-0}
+LEGACYBIOS=${LEGACYBIOS:-0}
+SERIAL=${SERIAL:-0}
+KERNEL=${KERNEL:-""}
+BOOTDISK=${BOOTDISK:-""}
+APPEND=${APPEND:-""}
+GDB=${GDB:-0}
+CORES=${CORES:-$(nproc)}
+LOGFILE=${LOGFILE:-""}
+RAM=${RAM:-"4G"}
+
+[[ VERBOSE -eq 1 ]] && set -x
+[[ HELP -eq 1 ]] && usage
+
+qcow2_img="$1" && shift
+qemu_args=(
+    -enable-kvm
+    -m ${RAM}
+    -drive file="$qcow2_img"','format=qcow2
+    -cpu host # Emulate the host processor
+    -smp $CORES
+    -display gtk,zoom-to-fit=on,full-screen=on # start qemu window in full-screen
+)
+qemu_args+=(-net nic -net user','smb="$PWD") # samba share the current directory
+[[ LEGACYBIOS -eq 0 ]] && {
+    # Boot with UEFI firmware
+    if [[ -d "/usr/share/ovmf" ]]; then
+        ovmf_dir="/usr/share/ovmf"
+    elif [[ -d "/usr/share/edk2-ovmf" ]]; then
+        ovmf_dir="/usr/share/edk2-ovmf"
+    else
+        die "Missing package: ovmf"
+    fi
+    qemu_args+=(-bios "${ovmf_dir}/x64/OVMF_CODE.fd")
+}
+[[ SERIAL -eq 1 ]] && {
+    # Type 'Ctrl-a c' to toggle between serial and the qemu monitor.  Note
+    # that unlike ssh, serial terminals don't have an out-of-band way to
+    # communicate the terminal geometry (defaults to 80x24).  You can set this
+    # manually during your session, e.g. by running 'stty rows 50 cols 115'
+    # (you can place this in your .bash_profile to persist the change), just
+    # make sure the row size isn't greater than your actual terminal.
+    APPEND="console=ttyS0 earlyprintk=serial $APPEND"
+    qemu_args+=(-nographic -serial mon:stdio)
+}
+[[ GDB -eq 1 ]] && {
+    # This requires a kernel with:
+    # - CONFIG_DEBUG_INFO (which itself requires CONFIG_DEBUG_KERNEL) to access symbols
+    # - CONFIG_GDB_SCRIPTS to import linux-specific gdb helper scripts when gdb loads vmlinux
+    #
+    # Then, open the uncompressed static binary (vmlinux) in gdb from the
+    # kernel tree root.  Then run 'hbreak start_kernel' before continuing.
+    # The linux-specific gdb functions can be viewed with 'apropos lx'.  If
+    # the python script fails to load, you may need to whitelist its path in
+    # .gdbinit with 'add-auto-load-safe-path /path/to/bin'.
+    #
+    # https://www.kernel.org/doc/html/latest/dev-tools/gdb-kernel-debugging.html
+    APPEND="nokaslr $APPEND" # disable kernel ASLR
+    qemu_args+=(-s) # starts gdb server (on localhost:1234 by default)
+    qemu_args+=(-S) # halts at startup, type 'c' in qemu console to continue
+}
+
+[[ -n $KERNEL ]] && qemu_args+=(-kernel "$KERNEL")
+[[ -n $APPEND ]] && qemu_args+=(-append "$APPEND")
+[[ -n $BOOTDISK ]] && qemu_args+=(-cdrom "$BOOTDISK" -boot order=d)
+qemu_args+=("$@") # append any other flags provided on the cmdline
+
+if [[ -n $LOGFILE ]]; then
+    qemu-system-x86_64 "${qemu_args[@]}" 2>&1 | tee "$LOGFILE"
+else
+    qemu-system-x86_64 "${qemu_args[@]}"
+fi

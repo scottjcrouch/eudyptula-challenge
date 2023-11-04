@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+
+# ----------------------------------------------------------------------------
+#
+# AUTHOR: Scott J. Crouch
+#
+# DESCRIPTION: Lists installed kernels and allows one to delete them and their
+#              associated initramfs, modules, map, and config files.  This is
+#              intended only for kernels installed from source on a debian
+#              system, and which aren't owned by dpkg.
+#
+# ----------------------------------------------------------------------------
+
+set -euo pipefail
+
+function usage
+{
+    cat <<EOF
+Usage:
+    ${0##*/} { list | remove { <VERSION_STRING> | <MODULE_DIRECTORY> } }
+Globals:
+    VERBOSE=0
+    HELP=0
+EOF
+    exit 0
+}
+
+function installed
+{
+    command -v "$1" &> /dev/null;
+}
+
+function die
+{
+    >&2 echo "Fatal: $*"
+    exit 1
+}
+
+function prompt
+{
+    while true; do
+        read -rp "$1 (y/n) " response
+        case $response in
+            [Yy]* ) true; return;;
+            [Nn]* ) false; return;;
+            * ) echo "Please answer yes or no.";;
+        esac
+    done
+}
+
+[[ "$(id -u)" = 0 ]] || die "Script must be run as root"
+
+deps=(dpkg grub-mkconfig)
+for dep in "${deps[@]}"; do
+    installed "${dep}" || die "Missing '${dep}'"
+done
+
+VERBOSE=${VERBOSE:-0}
+HELP=${HELP:-0}
+[[ $VERBOSE -ne 0 ]] && set -x
+[[ $HELP -eq 1 ]] && usage
+
+pkg_check()
+{
+    { dpkg -S "${1}" | grep -F "/lib/modules/${1}/"; } &> /dev/null
+}
+
+indent="    "
+if [[ "$1" = "list" ]]; then
+    for module_dir in /lib/modules/*; do
+        [[ ! -d "$module_dir" ]] && continue
+        kernel_version="$(basename "$module_dir")"
+        echo -n "$kernel_version"
+        { pkg_check "$kernel_version" && echo " (OWNED BY DPKG)"; } || echo
+        for file in /boot/*"${kernel_version}"; do
+            file="$(basename "$file")"
+            echo "${indent}${file}"
+        done
+        echo
+    done
+elif [[ "$1" = "remove" && -n "${2-}" ]]; then
+    kernel_version="$(basename "$2")"
+    module_dir="/lib/modules/${kernel_version}/"
+    [[ -d "$module_dir" ]] || die "No kernel by that name"
+    pkg_check "${kernel_version}" && die "$kernel_version is owned by dpkg"
+    echo "You are about to delete the following:"
+    echo
+    echo "${indent}${module_dir}"
+    for file in /boot/*"${kernel_version}"; do
+        echo "${indent}${file}"
+    done
+    echo
+    prompt "Really do this?" || die "Aborted"
+    rm -r "${module_dir}"
+    rm /boot/*"${kernel_version}"
+    grub-mkconfig -o /boot/grub/grub.cfg
+else
+    die "Invalid command"
+fi

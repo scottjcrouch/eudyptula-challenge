@@ -1,0 +1,295 @@
+diff --git a/fs/fat/dir.c b/fs/fat/dir.c
+index 00235b8a1823..81af499fd533 100644
+--- a/fs/fat/dir.c
++++ b/fs/fat/dir.c
+@@ -784,6 +784,91 @@ static int fat_ioctl_readdir(struct inode *inode, struct file *file,
+ 	return ret;
+ }
+ 
++static int fat_ioctl_get_volume_label_ent(struct inode *inode, u32 __user *user_attr)
++{
++	struct super_block *sb = inode->i_sb;
++	struct msdos_sb_info *sbi = MSDOS_SB(sb);
++	int isvfat = sbi->options.isvfat;
++	loff_t pos = 0;
++	struct buffer_head *bh = NULL;
++	struct msdos_dir_entry *de;
++	char label[MSDOS_NAME + 1];
++
++	while (fat_get_entry(inode, &pos, &bh, &de) >= 0) {
++		if ((de->attr & ATTR_VOLUME)
++		    && !(isvfat && (de->attr == ATTR_EXT))
++		    && (de->size == 0)
++		    && !IS_FREE(de->name)) {
++			memset(&label, 0, sizeof(label));
++			memcpy(&label, de->name, MSDOS_NAME);
++			brelse(bh);
++			return copy_to_user(user_attr, label, sizeof(label));
++		}
++	}
++	
++	return -ENOENT;
++}
++
++static int fat_ioctl_set_volume_label_ent(struct inode *dir, u32 __user *user_attr)
++{
++	struct msdos_sb_info *sbi = MSDOS_SB(dir->i_sb);
++	struct msdos_dir_entry de;
++	struct fat_slot_info sinfo;
++	struct timespec64 ts;
++	__le16 time, date;
++	int cluster = 0;
++	int err;
++	char new_label[MSDOS_NAME];
++
++	int isvfat = sbi->options.isvfat;
++	loff_t pos = 0;
++	struct buffer_head *bh = NULL;
++	struct msdos_dir_entry *de_iter;
++
++	if (copy_from_user(&new_label, user_attr, MSDOS_NAME))
++		return -EFAULT;
++
++	while (fat_get_entry(dir, &pos, &bh, &de_iter) >= 0) {
++		if ((de_iter->attr & ATTR_VOLUME)
++		    && !(isvfat && (de_iter->attr == ATTR_EXT))
++		    && (de_iter->size == 0)
++		    && !IS_FREE(de_iter->name)) {
++			memset(de_iter->name, 0, MSDOS_NAME);
++			memcpy(de_iter->name, new_label, MSDOS_NAME);
++			mark_buffer_dirty_inode(bh, dir);
++			sync_dirty_buffer(bh);
++			brelse(bh);
++			return 0;
++		}
++	}
++
++	ts = current_time(dir);
++	memset(de.name, 0, MSDOS_NAME);
++	memcpy(de.name, user_attr, MSDOS_NAME);
++	de.attr = ATTR_VOLUME;
++	de.lcase = 0;
++	fat_time_unix2fat(sbi, &ts, &time, &date, NULL);
++	de.cdate = de.adate = 0;
++	de.ctime = 0;
++	de.ctime_cs = 0;
++	de.time = time;
++	de.date = date;
++	fat_set_start(&de, cluster);
++	de.size = 0;
++
++	err = fat_add_entries(dir, &de, 1, &sinfo);
++	if (err)
++		return err;
++
++	fat_truncate_time(dir, &ts, S_CTIME|S_MTIME);
++	if (IS_DIRSYNC(dir))
++		(void)fat_sync_inode(dir);
++	else
++		mark_inode_dirty(dir);
++
++	return 0;
++}
++
+ static long fat_dir_ioctl(struct file *filp, unsigned int cmd,
+ 			  unsigned long arg)
+ {
+@@ -792,6 +877,10 @@ static long fat_dir_ioctl(struct file *filp, unsigned int cmd,
+ 	int short_only, both;
+ 
+ 	switch (cmd) {
++	case FAT_IOCTL_GET_VOLUME_LABEL_ENT:
++		return fat_ioctl_get_volume_label_ent(inode, (u32 __user *)arg);
++	case FAT_IOCTL_SET_VOLUME_LABEL_ENT:
++		return fat_ioctl_set_volume_label_ent(inode, (u32 __user *)arg);
+ 	case VFAT_IOCTL_READDIR_SHORT:
+ 		short_only = 1;
+ 		both = 0;
+diff --git a/fs/fat/fat.h b/fs/fat/fat.h
+index a415c02ede39..842a2e4695eb 100644
+--- a/fs/fat/fat.h
++++ b/fs/fat/fat.h
+@@ -86,6 +86,7 @@ struct msdos_sb_info {
+ 	int dir_per_block;	      /* dir entries per block */
+ 	int dir_per_block_bits;	      /* log2(dir_per_block) */
+ 	unsigned int vol_id;		/*volume ID*/
++	unsigned char vol_label[MSDOS_NAME];		/*volume label*/
+ 
+ 	int fatent_shift;
+ 	const struct fatent_operations *fatent_ops;
+diff --git a/fs/fat/file.c b/fs/fat/file.c
+index 8a6b493b5b5f..1f32c9ea80be 100644
+--- a/fs/fat/file.c
++++ b/fs/fat/file.c
+@@ -123,6 +123,74 @@ static int fat_ioctl_get_volume_id(struct inode *inode, u32 __user *user_attr)
+ 	return put_user(sbi->vol_id, user_attr);
+ }
+ 
++static int fat_ioctl_get_volume_label_bpb(struct inode *inode, u32 __user *user_attr)
++{
++	struct msdos_sb_info *sbi = MSDOS_SB(inode->i_sb);
++	int i;
++
++	/* Verify that a label was actually stashed in the superblock struct at mount time */
++	for (i = 0; i < MSDOS_NAME; i++)
++		if (sbi->vol_label[i] != 0)
++			return copy_to_user(user_attr, &(sbi->vol_label), MSDOS_NAME);
++
++	/* No label exists (most likely because the BPB is not extended) */
++	return -ENOTTY;
++}
++
++static int fat_ioctl_set_volume_label_bpb(struct inode *inode, u32 __user *user_attr)
++{
++	struct super_block *sb = inode->i_sb;
++	struct msdos_sb_info *sbi = MSDOS_SB(sb);
++	struct buffer_head *bh, *bh_mirror;
++	struct fat_boot_sector *bpb, *bpb_mirror;
++	char new_label[MSDOS_NAME] = {0};
++
++	if (copy_from_user(&new_label, user_attr, MSDOS_NAME))
++		return -EFAULT;
++
++	bh = sb_bread(sb, 0);
++	if (!bh)
++		return -EIO;
++
++	bpb = (struct fat_boot_sector *)bh->b_data;
++
++	if (is_fat32(sbi)) {
++		if (bpb->fat32.signature != FAT_EXTENDED_BOOT_SIG) {
++			brelse(bh);
++			return -ENOTTY;
++		}
++		memcpy(&(bpb->fat32.vol_label), &new_label, MSDOS_NAME);
++		
++		/* Write to the second copy of the FAT, if it exists */
++		if (bpb->fats == 2) {
++			bh_mirror = sb_bread(sb, bpb->fat32.backup_boot);
++			if (!bh_mirror) {
++				brelse(bh);
++				return -EIO;
++			}
++			bpb_mirror = (struct fat_boot_sector *)bh_mirror->b_data;
++			memcpy(&(bpb_mirror->fat32.vol_label), &new_label, MSDOS_NAME);
++			mark_buffer_dirty(bh_mirror);
++			sync_dirty_buffer(bh_mirror);
++			brelse(bh_mirror);
++		}
++	} else { /* fat16 or fat12 */
++		if (bpb->fat16.signature != FAT_EXTENDED_BOOT_SIG) {
++			brelse(bh);
++			return -ENOTTY;
++		}
++		memcpy(&(bpb->fat16.vol_label), &new_label, MSDOS_NAME);
++	}
++	mark_buffer_dirty(bh);
++	sync_dirty_buffer(bh);
++	brelse(bh);
++
++	/* Copy the label to the superblock struct where we stash it at mount time */
++	memcpy(&(sbi->vol_label), &new_label, MSDOS_NAME);
++
++	return 0;
++}
++
+ static int fat_ioctl_fitrim(struct inode *inode, unsigned long arg)
+ {
+ 	struct super_block *sb = inode->i_sb;
+@@ -165,6 +233,10 @@ long fat_generic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+ 		return fat_ioctl_set_attributes(filp, user_attr);
+ 	case FAT_IOCTL_GET_VOLUME_ID:
+ 		return fat_ioctl_get_volume_id(inode, user_attr);
++	case FAT_IOCTL_GET_VOLUME_LABEL_BPB:
++		return fat_ioctl_get_volume_label_bpb(inode, user_attr);
++	case FAT_IOCTL_SET_VOLUME_LABEL_BPB:
++		return fat_ioctl_set_volume_label_bpb(inode, user_attr);
+ 	case FITRIM:
+ 		return fat_ioctl_fitrim(inode, arg);
+ 	default:
+diff --git a/fs/fat/inode.c b/fs/fat/inode.c
+index d99b8549ec8f..443df014cac3 100644
+--- a/fs/fat/inode.c
++++ b/fs/fat/inode.c
+@@ -52,13 +52,17 @@ struct fat_bios_param_block {
+ 	u32	fat_total_sect;
+ 
+ 	u8	fat16_state;
++	u8	fat16_signature;
+ 	u32	fat16_vol_id;
++	u8	fat16_vol_label[MSDOS_NAME];
+ 
+ 	u32	fat32_length;
+ 	u32	fat32_root_cluster;
+ 	u16	fat32_info_sector;
+ 	u8	fat32_state;
++	u8	fat32_signature;
+ 	u32	fat32_vol_id;
++	u8	fat32_vol_label[MSDOS_NAME];
+ };
+ 
+ static int fat_default_codepage = CONFIG_FAT_DEFAULT_CODEPAGE;
+@@ -1469,13 +1473,17 @@ static int fat_read_bpb(struct super_block *sb, struct fat_boot_sector *b,
+ 	bpb->fat_total_sect = le32_to_cpu(b->total_sect);
+ 
+ 	bpb->fat16_state = b->fat16.state;
++	bpb->fat16_signature = b->fat16.signature;
+ 	bpb->fat16_vol_id = get_unaligned_le32(b->fat16.vol_id);
++	memcpy(&(bpb->fat16_vol_label), &(b->fat16.vol_label), MSDOS_NAME);
+ 
+ 	bpb->fat32_length = le32_to_cpu(b->fat32.length);
+ 	bpb->fat32_root_cluster = le32_to_cpu(b->fat32.root_cluster);
+ 	bpb->fat32_info_sector = le16_to_cpu(b->fat32.info_sector);
+ 	bpb->fat32_state = b->fat32.state;
++	bpb->fat32_signature = b->fat32.signature;
+ 	bpb->fat32_vol_id = get_unaligned_le32(b->fat32.vol_id);
++	memcpy(&(bpb->fat32_vol_label), &(b->fat32.vol_label), MSDOS_NAME);
+ 
+ 	/* Validate this looks like a FAT filesystem BPB */
+ 	if (!bpb->fat_reserved) {
+@@ -1749,10 +1757,19 @@ int fat_fill_super(struct super_block *sb, void *data, int silent, int isvfat,
+ 	}
+ 
+ 	/* interpret volume ID as a little endian 32 bit integer */
+-	if (is_fat32(sbi))
++	if (is_fat32(sbi)) {
+ 		sbi->vol_id = bpb.fat32_vol_id;
+-	else /* fat 16 or 12 */
++		if (bpb.fat32_signature == FAT_EXTENDED_BOOT_SIG)
++			memcpy(&(sbi->vol_label), &(bpb.fat32_vol_label), MSDOS_NAME);
++		else
++			memset(&(sbi->vol_label), 0, MSDOS_NAME);
++	} else { /* fat 16 or 12 */
+ 		sbi->vol_id = bpb.fat16_vol_id;
++		if (bpb.fat16_signature == FAT_EXTENDED_BOOT_SIG)
++			memcpy(&(sbi->vol_label), &(bpb.fat16_vol_label), MSDOS_NAME);
++		else
++			memset(&(sbi->vol_label), 0, MSDOS_NAME);
++	}
+ 
+ 	sbi->dir_per_block = sb->s_blocksize / sizeof(struct msdos_dir_entry);
+ 	sbi->dir_per_block_bits = ffs(sbi->dir_per_block) - 1;
+diff --git a/include/uapi/linux/msdos_fs.h b/include/uapi/linux/msdos_fs.h
+index a5773899f4d9..433dbb017f3e 100644
+--- a/include/uapi/linux/msdos_fs.h
++++ b/include/uapi/linux/msdos_fs.h
+@@ -87,6 +87,8 @@
+ 
+ #define FAT_STATE_DIRTY 0x01
+ 
++#define FAT_EXTENDED_BOOT_SIG 0x29
++
+ struct __fat_dirent {
+ 	long		d_ino;
+ 	__kernel_off_t	d_off;
+@@ -104,6 +106,10 @@ struct __fat_dirent {
+ #define FAT_IOCTL_SET_ATTRIBUTES	_IOW('r', 0x11, __u32)
+ /*Android kernel has used 0x12, so we use 0x13*/
+ #define FAT_IOCTL_GET_VOLUME_ID		_IOR('r', 0x13, __u32)
++#define FAT_IOCTL_GET_VOLUME_LABEL_BPB	_IOR('r', 0x14, char[MSDOS_NAME])
++#define FAT_IOCTL_SET_VOLUME_LABEL_BPB	_IOW('r', 0x15, char[MSDOS_NAME])
++#define FAT_IOCTL_GET_VOLUME_LABEL_ENT	_IOR('r', 0x16, char[MSDOS_NAME])
++#define FAT_IOCTL_SET_VOLUME_LABEL_ENT	_IOW('r', 0x17, char[MSDOS_NAME])
+ 
+ struct fat_boot_sector {
+ 	__u8	ignored[3];	/* Boot strap short or near jump */

@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+
+function die
+{
+    >&2 echo "Fatal: $*"
+    exit 1
+}
+
+[[ "$(id -u)" = 0 ]] || die "Script must be run as root"
+
+sys_dir="/sys/devices/platform/pcspkr"
+test_str="voidstarfoobar"
+
+echo "Testing read:"
+cat "${sys_dir}/id"
+echo "EOF"
+echo
+
+echo "Testing write without newline:"
+echo -n "${test_str}" > "${sys_dir}/id" && echo "SUCCESS" || echo "FAILURE"
+echo
+
+echo "Testing write with newline:"
+echo "${test_str}" > "${sys_dir}/id" && echo "SUCCESS" || echo "FAILURE"
+echo
+
+echo "Testing write without newline with strace:"
+tmp_file=$(mktemp -t "${0##*/}-strace-XXXXXXXX")
+strace -e write -o "${tmp_file}" -- echo -n "${test_str}" > "${sys_dir}/id" && echo "SUCCESS" || echo "FAILURE"
+cat "${tmp_file}"
+rm "${tmp_file}"
+echo
+
+echo "Testing write with newline with strace:"
+tmp_file=$(mktemp -t "${0##*/}-strace-XXXXXXXX")
+strace -e write -o "${tmp_file}" -- echo "${test_str}" > "${sys_dir}/id" && echo "SUCCESS" || echo "FAILURE"
+cat "${tmp_file}"
+rm "${tmp_file}"
+echo

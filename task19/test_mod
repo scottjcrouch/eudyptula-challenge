@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+
+function die
+{
+    >&2 echo "Fatal: $*"
+    exit 1
+}
+
+test_counter=1
+
+function test_header
+{
+    echo "----- ${0##*/}:${BASH_LINENO} test $((test_counter++)): $1 -----"
+    sleep 0.5 # avoid out-of-order execution, logging
+}
+
+function ctrl_c {
+    echo "Received SIGINT, cleaning up..."
+    rmmod eudyptula
+    exit $?
+}
+trap 'ctrl_c' SIGINT
+
+(cd src && make;) || die "Build failed"
+
+test_header "load module"
+sudo insmod src/eudyptula.ko dyndbg==p
+
+test_header "send ping"
+ping localhost -4 -c 1 > /dev/null
+
+test_header "send ping with id hidden in header"
+id_str="eudyptula"
+ping localhost -4 -p "$(echo -n "$id_str" | xxd -p -u)" -c 1 > /dev/null
+
+test_header "unload module"
+sudo rmmod eudyptula

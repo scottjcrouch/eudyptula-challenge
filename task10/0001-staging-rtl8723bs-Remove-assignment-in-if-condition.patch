@@ -1,0 +1,32 @@
+From 6e78b54c55750f6e85954c35fbf245defa84dd78 Mon Sep 17 00:00:00 2001
+From: "Scott J. Crouch" <foobar@foobar.com>
+Date: Sat, 15 May 2021 11:06:05 +1000
+Subject: [PATCH] staging: rtl8723bs: Remove assignment in if condition
+
+This fixes the following checkpatch.pl error:
+
+    ERROR: do not use assignment in if condition
+
+Signed-off-by: Scott J. Crouch <foobar@foobar.com>
+---
+ drivers/staging/rtl8723bs/core/rtw_ieee80211.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/staging/rtl8723bs/core/rtw_ieee80211.c b/drivers/staging/rtl8723bs/core/rtw_ieee80211.c
+index be4cffce4f5d..d4a661bd311d 100644
+--- a/drivers/staging/rtl8723bs/core/rtw_ieee80211.c
++++ b/drivers/staging/rtl8723bs/core/rtw_ieee80211.c
+@@ -1115,8 +1115,8 @@ void rtw_macaddr_cfg(struct device *dev, u8 *mac_addr)
+ 	}
+ 
+ 	if (is_broadcast_ether_addr(mac) || is_zero_ether_addr(mac)) {
+-		if ((addr = of_get_property(np, "local-mac-address", &len)) &&
+-		    len == ETH_ALEN) {
++		addr = of_get_property(np, "local-mac-address", &len);
++		if (addr && (len == ETH_ALEN)) {
+ 			ether_addr_copy(mac_addr, addr);
+ 		} else {
+ 			eth_random_addr(mac_addr);
+-- 
+2.31.1
+

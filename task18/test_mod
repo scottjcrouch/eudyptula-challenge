@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+
+function die
+{
+    >&2 echo "Fatal: $*"
+    exit 1
+}
+
+[[ "$(id -u)" = 0 ]] || die "Script must be run as root"
+
+test_counter=1
+
+function test_header
+{
+    echo "----- ${0##*/}:${BASH_LINENO} (test $((test_counter++))) -----"
+    sleep 0.1 # avoids printing out of order with any klog messages
+}
+
+test_header
+insmod src/eudyptula.ko dyndbg==p
+
+test_header
+echo -n "Alice" > /dev/eudyptula
+echo -n "Bob" > /dev/eudyptula
+sleep 2
+
+test_header
+echo -n "Alice" > /dev/eudyptula
+echo -n "String with a space" > /dev/eudyptula
+echo -n "Bob" > /dev/eudyptula
+sleep 3
+
+test_header
+echo -n "Alice" > /dev/eudyptula
+echo -n "I'm a longboiiiiiia5a5a5a5a5a5a5a5a5a5a5a5" > /dev/eudyptula
+echo -n "Bob" > /dev/eudyptula
+sleep 3
+
+test_header
+echo -n "Alice" > /dev/eudyptula
+echo -n "Shortboi Incoming" > /dev/eudyptula
+echo -n "" > /dev/eudyptula # this call never reaches my driver
+echo -n "Bob" > /dev/eudyptula
+sleep 4
+
+test_header # test premature exit
+echo -n "Dave" > /dev/eudyptula
+echo -n "Gena" > /dev/eudyptula
+rmmod eudyptula

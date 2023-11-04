@@ -1,0 +1,2 @@
+ACTION=="add" SUBSYSTEM=="input" SUBSYSTEMS=="usb" ENV{ID_INPUT_KEYBOARD}="1" SYMLINK+="zzzz_keyboard" RUN+="/usr/sbin/modprobe hello"
+ACTION=="remove" SUBSYSTEM=="input" SUBSYSTEMS=="usb" ENV{ID_INPUT_KEYBOARD}="1" RUN+="/usr/sbin/modprobe -r hello"

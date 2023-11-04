@@ -1,0 +1,80 @@
+From a2950ec9cf9ecc916ed15e181fa779c8e2071f51 Mon Sep 17 00:00:00 2001
+From: "Scott J. Crouch" <foobar@foobar.com>
+Date: Thu, 25 Aug 2022 14:53:36 +1000
+Subject: [PATCH] proc: add id file to pid directory for task 14
+
+---
+ fs/proc/base.c        | 9 +++++++++
+ include/linux/sched.h | 2 ++
+ init/init_task.c      | 1 +
+ kernel/fork.c         | 2 ++
+ 4 files changed, 14 insertions(+)
+
+diff --git a/fs/proc/base.c b/fs/proc/base.c
+index c1031843cc6a..50a58c4f34c5 100644
+--- a/fs/proc/base.c
++++ b/fs/proc/base.c
+@@ -3169,6 +3169,14 @@ static int proc_stack_depth(struct seq_file *m, struct pid_namespace *ns,
+ }
+ #endif /* CONFIG_STACKLEAK_METRICS */
+ 
++static int proc_eudyptula_id(struct seq_file *m, struct pid_namespace *ns,
++			     struct pid *pid, struct task_struct *task)
++{
++	seq_printf(m, "%lu\n", task->eudyptula_id++);
++
++	return 0;
++}
++
+ /*
+  * Thread groups
+  */
+@@ -3176,6 +3184,7 @@ static const struct file_operations proc_task_operations;
+ static const struct inode_operations proc_task_inode_operations;
+ 
+ static const struct pid_entry tgid_base_stuff[] = {
++	ONE("id",         S_IRUGO, proc_eudyptula_id),
+ 	DIR("task",       S_IRUGO|S_IXUGO, proc_task_inode_operations, proc_task_operations),
+ 	DIR("fd",         S_IRUSR|S_IXUSR, proc_fd_inode_operations, proc_fd_operations),
+ 	DIR("map_files",  S_IRUSR|S_IXUSR, proc_map_files_inode_operations, proc_map_files_operations),
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index a8911b1f35aa..350f6db93443 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -735,6 +735,8 @@ struct task_struct {
+ #endif
+ 	unsigned int			__state;
+ 
++	unsigned long			eudyptula_id;
++
+ #ifdef CONFIG_PREEMPT_RT
+ 	/* saved state for "spinlock sleepers" */
+ 	unsigned int			saved_state;
+diff --git a/init/init_task.c b/init/init_task.c
+index 73cc8f03511a..e72185a698f4 100644
+--- a/init/init_task.c
++++ b/init/init_task.c
+@@ -72,6 +72,7 @@ struct task_struct init_task
+ 	.stack_refcount	= REFCOUNT_INIT(1),
+ #endif
+ 	.__state	= 0,
++	.eudyptula_id	= 0xBEEFBADB0BA900D,
+ 	.stack		= init_stack,
+ 	.usage		= REFCOUNT_INIT(2),
+ 	.flags		= PF_KTHREAD,
+diff --git a/kernel/fork.c b/kernel/fork.c
+index 35a3beff140b..6eae0402894f 100644
+--- a/kernel/fork.c
++++ b/kernel/fork.c
+@@ -1030,6 +1030,8 @@ static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
+ 	kcov_task_init(tsk);
+ 	kmap_local_fork(tsk);
+ 
++	tsk->eudyptula_id = 0xBEEFBADB0BA900D;
++
+ #ifdef CONFIG_FAULT_INJECTION
+ 	tsk->fail_nth = 0;
+ #endif
+-- 
+2.20.1
+
